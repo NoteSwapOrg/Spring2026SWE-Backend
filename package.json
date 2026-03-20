@@ -1,0 +1,17 @@
+{
+  "name": "spring2026swe-backend",
+  "version": "1.0.0",
+  "description": "Backend for ecommerce application",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
