@@ -25,8 +25,6 @@ db_router.get('/order_info', (req, res) => {
     })
 })
 
-export default db_router
-
 // Product Inventory
 db_router.get('/product_inventory', (req, res) => {
     product_inventory()
@@ -37,3 +35,5 @@ db_router.get('/product_inventory', (req, res) => {
         console.log("ERROR: ", error)
     })
 })
+
+export default db_router
