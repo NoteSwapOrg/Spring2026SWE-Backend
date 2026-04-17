@@ -1,9 +1,34 @@
-import pgPromise from "pg-promise";
-import "dotenv/config";
+import db from "../db.js";
 
-const pgp = pgPromise({});
-const db = pgp(process.env.DB_CONNECTION);
+/* DB READS */
 
+// USER INFO
+// Simple example query that fetches one user by user_id.
+export const user_info = async (user_id) => {
+  try {
+    const user_info = await db.one("SELECT * FROM users WHERE user_id = $1", [user_id]);
+    return user_info;
+  } catch (error) {
+    console.log("ERROR:", error);
+    throw error;
+  }
+};
+
+// ORDER INFO
+// Simple example query that fetches one order by order_id.
+export const order_info = async (order_id) => {
+  try {
+    const order_info = await db.one("SELECT * FROM orders WHERE order_id = $1", [order_id]);
+    return order_info;
+  } catch (error) {
+    console.log("ERROR:", error);
+    throw error;
+  }
+};
+
+// Shared SQL fragment for product lookups.
+// This joins products with categories and users so the frontend gets
+// one clean object with everything it needs for display.
 const productSelect = `
   SELECT
     p.product_id AS id,
@@ -19,6 +44,10 @@ const productSelect = `
     p.availability_status::text AS "availabilityStatus",
     CONCAT(u.first_name, ' ', u.last_name) AS seller,
     COALESCE(u.address, 'San Antonio, TX') AS location,
+
+    -- Temporary image mapping based on category.
+    -- Since the database does not currently store image URLs,
+    -- we return a fallback image for each category.
     CASE c.category_name
       WHEN 'Guitar' THEN 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?auto=format&fit=crop&w=900&q=80'
       WHEN 'Piano' THEN 'https://images.unsplash.com/photo-1514119412350-e174d90d280e?auto=format&fit=crop&w=900&q=80'
@@ -34,24 +63,8 @@ const productSelect = `
   JOIN users u ON p.seller_id = u.user_id
 `;
 
-export const user_info = async (user_id) => {
-  try {
-    return await db.one("SELECT * FROM users WHERE user_id = $1", [user_id]);
-  } catch (error) {
-    console.log("ERROR:", error);
-    throw error;
-  }
-};
-
-export const order_info = async (order_id) => {
-  try {
-    return await db.one("SELECT * FROM orders WHERE order_id = $1", [order_id]);
-  } catch (error) {
-    console.log("ERROR:", error);
-    throw error;
-  }
-};
-
+// GET ALL PRODUCTS
+// Returns all currently available products for the marketplace homepage.
 export const get_all_products = async () => {
   try {
     return await db.any(`
@@ -65,6 +78,8 @@ export const get_all_products = async () => {
   }
 };
 
+// GET PRODUCT BY ID
+// Used when we want details for one specific item.
 export const get_product_by_id = async (product_id) => {
   try {
     return await db.oneOrNone(

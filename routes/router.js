@@ -1,14 +1,20 @@
-import express from 'express'
-import db_router from './db_router.js';
+import express from "express";
+import db_router from "./db_router.js";
+import auth_router from "./auth_router.js";
 
+// Main top-level router.
+// This file acts like the traffic director for backend routes.
 const router = express.Router();
 
-// Child Routes
-router.use('/database', db_router)
+// All database-related routes will begin with /database
+router.use("/database", db_router);
 
-// Default Route
-router.get('/', (req, res) => {
-  res.status(200).json("message: connected")
-})
+// All authentication-related routes will begin with /auth
+router.use("/auth", auth_router);
 
-export default router
+// Simple root route for testing that the server/router is alive.
+router.get("/", (req, res) => {
+  res.status(200).json("message: connected");
+});
+
+export default router;
