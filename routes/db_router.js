@@ -1,5 +1,5 @@
 import express from 'express'
-import { order_info, user_info } from '../controllers/db_controller.js'
+import { order_info, user_info, product_inventory } from '../controllers/db_controller.js'
 
 const db_router = express.Router()
 
@@ -26,3 +26,14 @@ db_router.get('/order_info', (req, res) => {
 })
 
 export default db_router
+
+// Product Inventory
+db_router.get('/product_inventory', (req, res) => {
+    product_inventory()
+    .then((data) => {
+        res.status(200).json(data)
+    })
+    .catch((error) => {
+        console.log("ERROR: ", error)
+    })
+})
