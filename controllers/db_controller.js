@@ -37,17 +37,13 @@ const productSelect = `
     c.category_name AS category,
     p.brand,
     p.price::float8 AS price,
+    p.quantity,
     p.item_type::text AS "itemType",
-    INITCAP(p.product_condition::text) AS condition,
     p.product_description AS description,
     p.listing_date AS "listingDate",
     p.availability_status::text AS "availabilityStatus",
     CONCAT(u.first_name, ' ', u.last_name) AS seller,
     COALESCE(u.address, 'San Antonio, TX') AS location,
-
-    -- Temporary image mapping based on category.
-    -- Since the database does not currently store image URLs,
-    -- we return a fallback image for each category.
     CASE c.category_name
       WHEN 'Guitar' THEN 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?auto=format&fit=crop&w=900&q=80'
       WHEN 'Piano' THEN 'https://images.unsplash.com/photo-1514119412350-e174d90d280e?auto=format&fit=crop&w=900&q=80'
