@@ -1,5 +1,5 @@
 import express from "express";
-import { requireAuth } from "../middleware/require_auth.js";
+import { requireUser } from "../middleware/require_auth.js";
 import {
   createCheckoutSession,
   finalizeOrder,
@@ -7,7 +7,7 @@ import {
 
 const payment_router = express.Router();
 
-payment_router.post("/create-checkout-session", requireAuth, createCheckoutSession);
-payment_router.post("/finalize-order", requireAuth, finalizeOrder);
+payment_router.post("/create-checkout-session", requireUser, createCheckoutSession);
+payment_router.post("/finalize-order", requireUser, finalizeOrder);
 
 export default payment_router;
