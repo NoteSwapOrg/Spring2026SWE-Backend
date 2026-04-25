@@ -1,14 +1,21 @@
 import "dotenv/config";
-import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import {
+  CognitoIdentityProviderClient,
+  SignUpCommand,
+  ConfirmSignUpCommand,
+  ResendConfirmationCodeCommand,
+  InitiateAuthCommand,
+  GetUserCommand,
+} from "@aws-sdk/client-cognito-identity-provider";
 import db from "../db.js";
 
-// Number of salt rounds used by bcrypt when hashing passwords.
-// Higher = more secure, but slower.
-const SALT_ROUNDS = 10;
+const cognitoClient = new CognitoIdentityProviderClient({
+  region: process.env.COGNITO_REGION || "us-east-2",
+});
 
-// Helper function that removes sensitive fields before sending a user back to the frontend.
-// We never want to return password_hash to the client.
+const COGNITO_PLACEHOLDER_PASSWORD = "COGNITO_MANAGED";
+
 const buildSafeUser = (user) => ({
   userId: user.user_id,
   username: user.username,
@@ -20,34 +27,6 @@ const buildSafeUser = (user) => ({
   createdAt: user.created_at,
 });
 
-// Creates a signed JWT token for a successfully authenticated user.
-// The token stores a few basic identifying fields.
-const signToken = (user) => {
-  if (!process.env.JWT_SECRET) {
-    throw new Error("Missing JWT_SECRET in environment");
-  }
-
-  return jwt.sign(
-    {
-      userId: user.user_id,
-      username: user.username,
-      email: user.email,
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: "7d" }
-  );
-};
-
-// Reads the Bearer token from the Authorization header.
-// Example header format: "Authorization: Bearer abc123..."
-const getBearerToken = (req) => {
-  const authHeader = req.headers.authorization || "";
-  if (!authHeader.startsWith("Bearer ")) return null;
-  return authHeader.slice(7).trim();
-};
-
-// If the frontend sends one full name string instead of separate first/last names,
-// this helper splits it into two pieces for the database.
 const splitFullName = (fullName = "") => {
   const trimmed = fullName.trim();
   if (!trimmed) return ["", ""];
@@ -57,80 +36,69 @@ const splitFullName = (fullName = "") => {
   return [firstName, lastName];
 };
 
-// SIGNUP CONTROLLER
-// Creates a new user account.
-export const signup = async (req, res) => {
-  try {
-    // Pull values from the request body sent by the frontend.
-    const {
-      username,
-      email,
-      password,
-      firstName,
-      lastName,
-      fullName,
-      phoneNumber,
-      address,
-    } = req.body;
+const getSecretHash = (username) => {
+  const clientId = (process.env.COGNITO_CLIENT_ID || "").trim();
+  const clientSecret = (process.env.COGNITO_CLIENT_SECRET || "").trim();
+  const normalizedUsername = (username || "").trim();
 
-    // Normalize values before using them.
-    const normalizedEmail = email?.trim().toLowerCase() || "";
-    const derivedUsername = username?.trim() || normalizedEmail.split("@")[0] || "";
-    const [derivedFirstName, derivedLastName] = splitFullName(fullName);
-    const finalFirstName = firstName?.trim() || derivedFirstName;
-    const finalLastName = lastName?.trim() || derivedLastName;
+  if (!clientId) {
+    throw new Error("Missing COGNITO_CLIENT_ID in environment");
+  }
 
-    // Basic required field validation.
-    if (!normalizedEmail || !password || !derivedUsername || !finalFirstName || !finalLastName) {
-      return res.status(400).json({
-        error:
-          "username or email, password, first name, and last name are required",
-      });
-    }
+  if (!clientSecret) {
+    throw new Error("Missing COGNITO_CLIENT_SECRET in environment");
+  }
 
-    // Password minimum length check.
-    if (password.length < 8) {
-      return res.status(400).json({
-        error: "Password must be at least 8 characters long",
-      });
-    }
+  return crypto
+    .createHmac("sha256", clientSecret)
+    .update(`${normalizedUsername}${clientId}`)
+    .digest("base64");
+};
 
-    // Check whether username or email is already in use.
-    const existingUser = await db.oneOrNone(
+const getUserAttribute = (attributes = [], name) => {
+  const found = attributes.find((attr) => attr.Name === name);
+  return found?.Value || "";
+};
+
+const findOrCreateLocalUser = async ({
+  username,
+  email,
+  firstName,
+  lastName,
+  phoneNumber,
+  address,
+}) => {
+  const existingUser = await db.oneOrNone(
+    `
+      SELECT
+        user_id,
+        username,
+        email,
+        first_name,
+        last_name,
+        phone_number,
+        address,
+        created_at
+      FROM users
+      WHERE LOWER(username) = LOWER($1)
+         OR LOWER(email) = LOWER($2)
+      LIMIT 1
+    `,
+    [username, email]
+  );
+
+  if (existingUser) {
+    return db.one(
       `
-        SELECT user_id, username, email
-        FROM users
-        WHERE LOWER(username) = LOWER($1)
-           OR LOWER(email) = LOWER($2)
-      `,
-      [derivedUsername, normalizedEmail]
-    );
-
-    if (existingUser) {
-      const conflictField =
-        existingUser.email.toLowerCase() === normalizedEmail ? "email" : "username";
-
-      return res.status(409).json({
-        error: `That ${conflictField} is already in use`,
-      });
-    }
-
-    // Hash the password before storing it in the database.
-    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-
-    // Insert the new user and return the created row.
-    const newUser = await db.one(
-      `
-        INSERT INTO users (
-          username,
-          password_hash,
-          email,
-          first_name,
-          last_name,
-          phone_number,
-          address
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        UPDATE users
+        SET
+          username = $1,
+          email = $2,
+          first_name = $3,
+          last_name = $4,
+          phone_number = $5,
+          address = $6
+        WHERE user_id = $7
         RETURNING
           user_id,
           username,
@@ -142,155 +110,280 @@ export const signup = async (req, res) => {
           created_at
       `,
       [
-        derivedUsername,
-        passwordHash,
-        normalizedEmail,
-        finalFirstName,
-        finalLastName,
-        phoneNumber?.trim() || null,
-        address?.trim() || null,
+        username,
+        email,
+        firstName || null,
+        lastName || null,
+        phoneNumber || null,
+        address || null,
+        existingUser.user_id,
       ]
     );
+  }
 
-    // Generate a JWT for the newly created user.
-    const token = signToken(newUser);
+  return db.one(
+    `
+      INSERT INTO users (
+        username,
+        password_hash,
+        email,
+        first_name,
+        last_name,
+        phone_number,
+        address
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING
+        user_id,
+        username,
+        email,
+        first_name,
+        last_name,
+        phone_number,
+        address,
+        created_at
+    `,
+    [
+      username,
+      COGNITO_PLACEHOLDER_PASSWORD,
+      email,
+      firstName || null,
+      lastName || null,
+      phoneNumber || null,
+      address || null,
+    ]
+  );
+};
 
-    // Return a success response, token, and safe user object.
-    return res.status(201).json({
-      message: "Signup successful",
-      token,
-      user: buildSafeUser(newUser),
+export const signup = async (req, res) => {
+  try {
+    const {
+      username,
+      email,
+      password,
+      firstName,
+      lastName,
+      fullName,
+      phoneNumber,
+      address,
+    } = req.body;
+
+    const normalizedUsername = username?.trim() || "";
+    const normalizedEmail = email?.trim().toLowerCase() || "";
+    const normalizedFullName = fullName?.trim() || "";
+    const [derivedFirstName, derivedLastName] = splitFullName(normalizedFullName);
+    const resolvedFirstName = firstName?.trim() || derivedFirstName || "";
+    const resolvedLastName = lastName?.trim() || derivedLastName || "";
+
+    if (!normalizedUsername || !normalizedEmail || !password || !normalizedFullName) {
+      return res.status(400).json({
+        error: "Full name, username, email, and password are required",
+      });
+    }
+
+    const command = new SignUpCommand({
+      ClientId: (process.env.COGNITO_CLIENT_ID || "").trim(),
+      Username: normalizedUsername,
+      Password: password,
+      SecretHash: getSecretHash(normalizedUsername),
+      UserAttributes: [
+        { Name: "email", Value: normalizedEmail },
+        { Name: "preferred_username", Value: normalizedUsername },
+        { Name: "name", Value: normalizedFullName },
+        ...(resolvedFirstName
+          ? [{ Name: "given_name", Value: resolvedFirstName }]
+          : []),
+        ...(resolvedLastName
+          ? [{ Name: "family_name", Value: resolvedLastName }]
+          : []),
+        ...(phoneNumber?.trim()
+          ? [{ Name: "phone_number", Value: phoneNumber.trim() }]
+          : []),
+        ...(address?.trim()
+          ? [{ Name: "address", Value: address.trim() }]
+          : []),
+      ],
+    });
+
+    const result = await cognitoClient.send(command);
+
+    return res.status(200).json({
+      message: result.UserConfirmed
+        ? "Signup successful"
+        : "Signup successful. Confirmation code required.",
+      username: normalizedUsername,
+      userConfirmed: Boolean(result.UserConfirmed),
+      userSub: result.UserSub,
+      requiresConfirmation: !result.UserConfirmed,
     });
   } catch (error) {
-    console.log("SIGNUP ERROR:", error);
+    console.log("COGNITO SIGNUP ERROR:", error);
     return res.status(500).json({
-      error: "Failed to create account",
+      error: error.name || error.message || "Failed to sign up",
     });
   }
 };
 
-// LOGIN CONTROLLER
-// Verifies credentials and returns a token if correct.
+export const confirmSignup = async (req, res) => {
+  try {
+    const { username, code } = req.body;
+
+    if (!username || !code) {
+      return res.status(400).json({
+        error: "Username and confirmation code are required",
+      });
+    }
+
+    const normalizedUsername = username.trim();
+
+    const command = new ConfirmSignUpCommand({
+      ClientId: (process.env.COGNITO_CLIENT_ID || "").trim(),
+      Username: normalizedUsername,
+      ConfirmationCode: code.trim(),
+      SecretHash: getSecretHash(normalizedUsername),
+    });
+
+    await cognitoClient.send(command);
+
+    return res.status(200).json({
+      message: "Account confirmed successfully",
+    });
+  } catch (error) {
+    console.log("COGNITO CONFIRM SIGNUP ERROR:", error);
+    return res.status(500).json({
+      error: error.name || error.message || "Failed to confirm signup",
+    });
+  }
+};
+
+export const resendSignupCode = async (req, res) => {
+  try {
+    const { username } = req.body;
+
+    if (!username) {
+      return res.status(400).json({
+        error: "Username is required",
+      });
+    }
+
+    const normalizedUsername = username.trim();
+
+    const command = new ResendConfirmationCodeCommand({
+      ClientId: (process.env.COGNITO_CLIENT_ID || "").trim(),
+      Username: normalizedUsername,
+      SecretHash: getSecretHash(normalizedUsername),
+    });
+
+    await cognitoClient.send(command);
+
+    return res.status(200).json({
+      message: "Confirmation code resent",
+    });
+  } catch (error) {
+    console.log("COGNITO RESEND CODE ERROR:", error);
+    return res.status(500).json({
+      error: error.name || error.message || "Failed to resend confirmation code",
+    });
+  }
+};
+
 export const login = async (req, res) => {
   try {
-    const { identifier, email, username, password } = req.body;
+    const { identifier, password } = req.body;
 
-    // Allow login by identifier, email, or username.
-    const loginValue = (identifier || email || username || "").trim().toLowerCase();
-
-    if (!loginValue || !password) {
+    if (!identifier || !password) {
       return res.status(400).json({
-        error: "identifier and password are required",
+        error: "Identifier and password are required",
       });
     }
 
-    // Look up the user by username or email.
-    const user = await db.oneOrNone(
-      `
-        SELECT
-          user_id,
-          username,
-          email,
-          first_name,
-          last_name,
-          phone_number,
-          address,
-          created_at,
-          password_hash
-        FROM users
-        WHERE LOWER(email) = LOWER($1)
-           OR LOWER(username) = LOWER($1)
-      `,
-      [loginValue]
-    );
+    const normalizedIdentifier = identifier.trim();
 
-    if (!user) {
-      return res.status(401).json({
-        error: "Invalid credentials",
+    // This pool is currently using username-based login.
+    // Use the Cognito username here, not email.
+    if (normalizedIdentifier.includes("@")) {
+      return res.status(400).json({
+        error: "Use your username to log in, not your email address",
       });
     }
 
-    // Compare the submitted password with the stored hash.
-    const passwordMatches = await bcrypt.compare(password, user.password_hash);
+    const cognitoUsername = normalizedIdentifier;
 
-    if (!passwordMatches) {
-      return res.status(401).json({
-        error: "Invalid credentials",
+    const authCommand = new InitiateAuthCommand({
+      AuthFlow: "USER_PASSWORD_AUTH",
+      ClientId: (process.env.COGNITO_CLIENT_ID || "").trim(),
+      AuthParameters: {
+        USERNAME: cognitoUsername,
+        PASSWORD: password,
+        SECRET_HASH: getSecretHash(cognitoUsername),
+      },
+    });
+
+    const authResult = await cognitoClient.send(authCommand);
+
+    if (authResult.ChallengeName) {
+      return res.status(400).json({
+        error: `Cognito challenge "${authResult.ChallengeName}" is not handled yet`,
       });
     }
 
-    // Create a token for the authenticated user.
-    const token = signToken(user);
+    if (!authResult.AuthenticationResult?.AccessToken) {
+      return res.status(400).json({
+        error: "No access token returned from Cognito",
+      });
+    }
+
+    const accessToken = authResult.AuthenticationResult.AccessToken;
+
+    const getUserCommand = new GetUserCommand({
+      AccessToken: accessToken,
+    });
+
+    const cognitoUser = await cognitoClient.send(getUserCommand);
+
+    const username =
+      getUserAttribute(cognitoUser.UserAttributes, "preferred_username") ||
+      cognitoUser.Username ||
+      cognitoUsername;
+
+    const email = getUserAttribute(cognitoUser.UserAttributes, "email");
+    const firstName = getUserAttribute(cognitoUser.UserAttributes, "given_name");
+    const lastName = getUserAttribute(cognitoUser.UserAttributes, "family_name");
+    const phoneNumber = getUserAttribute(cognitoUser.UserAttributes, "phone_number");
+    const address = getUserAttribute(cognitoUser.UserAttributes, "address");
+
+    if (!email) {
+      return res.status(400).json({
+        error: "Cognito user is missing an email attribute",
+      });
+    }
+
+    const localUser = await findOrCreateLocalUser({
+      username,
+      email,
+      firstName,
+      lastName,
+      phoneNumber,
+      address,
+    });
 
     return res.status(200).json({
       message: "Login successful",
-      token,
-      user: buildSafeUser(user),
+      token: authResult.AuthenticationResult.AccessToken,
+      idToken: authResult.AuthenticationResult.IdToken || null,
+      refreshToken: authResult.AuthenticationResult.RefreshToken || null,
+      user: buildSafeUser(localUser),
     });
   } catch (error) {
-    console.log("LOGIN ERROR:", error);
+    console.log("COGNITO LOGIN ERROR:", error);
     return res.status(500).json({
-      error: "Failed to log in",
+      error: error.name || error.message || "Failed to log in",
     });
   }
 };
 
-// ME CONTROLLER
-// Returns the currently logged-in user based on the Bearer token.
-export const me = async (req, res) => {
-  try {
-    const token = getBearerToken(req);
-
-    if (!token) {
-      return res.status(401).json({
-        error: "Missing authorization token",
-      });
-    }
-
-    // Verify the JWT and decode the payload.
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    // Find the user from the database using the userId stored in the token.
-    const user = await db.oneOrNone(
-      `
-        SELECT
-          user_id,
-          username,
-          email,
-          first_name,
-          last_name,
-          phone_number,
-          address,
-          created_at
-        FROM users
-        WHERE user_id = $1
-      `,
-      [decoded.userId]
-    );
-
-    if (!user) {
-      return res.status(404).json({
-        error: "User not found",
-      });
-    }
-
-    return res.status(200).json({
-      user: buildSafeUser(user),
-    });
-  } catch (error) {
-    console.log("ME ERROR:", error);
-    return res.status(401).json({
-      error: "Invalid or expired token",
-    });
-  }
-};
-
-// LOGOUT CONTROLLER
-// For this version, logout is mostly a frontend action.
-// The frontend removes the token from storage.
-// This route exists so the frontend has a clean logout endpoint to call.
 export const logout = async (req, res) => {
   return res.status(200).json({
-    message: "Logout successful. Remove the token on the client.",
+    message: "Logout successful",
   });
 };

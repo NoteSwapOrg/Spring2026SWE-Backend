@@ -1,5 +1,5 @@
 import express from "express";
-import { requireAuth } from "../middleware/require_auth.js";
+import { requireUser } from "../middleware/require_auth.js";
 import {
   getMyOrders,
   getOrderById,
@@ -7,7 +7,7 @@ import {
 
 const order_router = express.Router();
 
-order_router.get("/my-orders", requireAuth, getMyOrders);
-order_router.get("/:orderId", requireAuth, getOrderById);
+order_router.get("/my-orders", requireUser, getMyOrders);
+order_router.get("/:orderId", requireUser, getOrderById);
 
 export default order_router;
