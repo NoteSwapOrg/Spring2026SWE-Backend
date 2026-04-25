@@ -1,60 +1,70 @@
-import jwt from "jsonwebtoken";
-import db from "../db.js";
+import { CognitoJwtVerifier } from "aws-jwt-verify";
 
-export const requireAuth = async (req, res, next) => {
-  try {
-    const authHeader = req.headers.authorization || "";
+// Verifier that expects valid access tokens
+const verifier = CognitoJwtVerifier.create({
+  userPoolId: process.env.COGNITO_POOL_ID,
+  tokenUse: "access",
+  clientId: process.env.COGNITO_CLIENT_ID,
+});
 
-    if (!authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({
-        error: "Missing authorization token",
-      });
+// Require an authorized user to be logged in
+const requireUser = async (req, res, next) => {
+    // extract the jwt token 
+    const authHeader = req.headers.authorization
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.satus(401).json({
+            error: "Invalid Header, Missing Authorization"
+        })
     }
+    const token = authHeader.split(" ")[1]
+    // assess the group
+    try {
+        const payload = await verifier.verify(token)
 
-    const token = authHeader.slice(7).trim();
-
-    if (!process.env.JWT_SECRET) {
-      throw new Error("Missing JWT_SECRET in environment");
+        const group = payload["cognito:groups"] || []
+        if (!group.includes("user")) {
+            return res.status(401).json({
+                error: "Unauthorized Access"
+            })
+        }
+        req.user = payload
+        next()
     }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    const user = await db.oneOrNone(
-      `
-        SELECT
-          user_id,
-          username,
-          email,
-          first_name,
-          last_name,
-          phone_number,
-          address,
-          created_at
-        FROM users
-        WHERE user_id = $1
-      `,
-      [decoded.userId]
-    );
-
-    if (!user) {
-      return res.status(401).json({
-        error: "User not found",
-      });
+    catch (err) {
+        console.log("Token Verification Failed: ", err)
+        return res.status(403).json({
+            error: "invalid or expired token"
+        })
     }
+}
 
-    req.user = {
-      userId: user.user_id,
-      username: user.username,
-      email: user.email,
-      firstName: user.first_name,
-      lastName: user.last_name,
-    };
+// Require an authorized admin to be logged in
+const requireAdmin = async (req, res, next) => {
+    // extract the jwt token 
+    const authHeader = req.headers.authorization
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.satus(401).json({
+            error: "Invalid Header, Missing Authorization"
+        })
+    }
+    const token = authHeader.split(" ")[1]
+    // assess the group
+    try {
+        const payload = await verifier.verify(token)
 
-    next();
-  } catch (error) {
-    console.log("AUTH MIDDLEWARE ERROR:", error);
-    return res.status(401).json({
-      error: "Invalid or expired token",
-    });
-  }
-};
+        const group = payload["cognito:groups"] || []
+        if (!group.includes("admin")) {
+            return res.status(401).json({
+                error: "Unauthorized Access"
+            })
+        }
+        req.user = payload
+        next()
+    }
+    catch (err) {
+        console.log("Token Verification Failed: ", err)
+        return res.status(403).json({
+            error: "invalid or expired token"
+        })
+    }
+}
