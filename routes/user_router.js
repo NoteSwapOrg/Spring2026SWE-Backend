@@ -1,5 +1,5 @@
 import express from "express";
-import { requireAuth } from "../middleware/require_auth.js";
+import { requireUser } from "../middleware/require_auth.js";
 import {
   getCurrentUserProfile,
   updateCurrentUserProfile,
@@ -7,7 +7,7 @@ import {
 
 const user_router = express.Router();
 
-user_router.get("/me", requireAuth, getCurrentUserProfile);
-user_router.patch("/me", requireAuth, updateCurrentUserProfile);
+user_router.get("/me", requireUser, getCurrentUserProfile);
+user_router.patch("/me", requireUser, updateCurrentUserProfile);
 
 export default user_router;
