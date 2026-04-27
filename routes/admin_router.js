@@ -4,7 +4,9 @@ import {
   adminHealth,
   getAdminDashboard,
   getAdminProducts,
+  createAdminProduct,
   updateAdminProduct,
+  deleteAdminProduct,
   getAdminUsers,
   updateAdminUser,
   getAdminOrders,
@@ -24,7 +26,9 @@ admin_router.get("/health", adminHealth);
 admin_router.get("/dashboard", getAdminDashboard);
 
 admin_router.get("/products", getAdminProducts);
+admin_router.post("/products", createAdminProduct);
 admin_router.patch("/products/:productId", updateAdminProduct);
+admin_router.delete("/products/:productId", deleteAdminProduct);
 
 admin_router.get("/users", getAdminUsers);
 admin_router.patch("/users/:userId", updateAdminUser);

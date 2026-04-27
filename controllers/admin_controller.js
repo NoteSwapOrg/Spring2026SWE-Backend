@@ -229,6 +229,232 @@ export const updateAdminProduct = async (req, res) => {
   }
 };
 
+export const createAdminProduct = async (req, res) => {
+  try {
+    const {
+      sku,
+      productName,
+      brand,
+      categoryId,
+      price,
+      salePrice,
+      isOnSale,
+      isFeatured,
+      quantity,
+      itemType,
+      productCondition,
+      availabilityStatus,
+      productDescription,
+    } = req.body;
+
+    if (!sku || !productName || !categoryId || price === undefined || quantity === undefined) {
+      return res.status(400).json({
+        error: "SKU, product name, category, price, and quantity are required",
+      });
+    }
+
+    const numericCategoryId = Number(categoryId);
+    const numericPrice = Number(price);
+    const numericQuantity = Number(quantity);
+    const numericSalePrice =
+      salePrice === null || salePrice === undefined || salePrice === ""
+        ? null
+        : Number(salePrice);
+
+    if (!Number.isInteger(numericCategoryId)) {
+      return res.status(400).json({
+        error: "Invalid category",
+      });
+    }
+
+    if (!Number.isFinite(numericPrice) || numericPrice < 0) {
+      return res.status(400).json({
+        error: "Price must be a valid positive number",
+      });
+    }
+
+    if (!Number.isInteger(numericQuantity) || numericQuantity < 0) {
+      return res.status(400).json({
+        error: "Quantity must be a valid whole number",
+      });
+    }
+
+    if (
+      numericSalePrice !== null &&
+      (!Number.isFinite(numericSalePrice) || numericSalePrice < 0)
+    ) {
+      return res.status(400).json({
+        error: "Sale price must be a valid positive number",
+      });
+    }
+
+    if (Boolean(isOnSale) && numericSalePrice === null) {
+      return res.status(400).json({
+        error: "Sale price is required when product is marked on sale",
+      });
+    }
+
+    if (numericSalePrice !== null && numericSalePrice > numericPrice) {
+      return res.status(400).json({
+        error: "Sale price cannot be greater than regular price",
+      });
+    }
+
+    const category = await db.oneOrNone(
+      `
+        SELECT category_id
+        FROM categories
+        WHERE category_id = $1
+      `,
+      [numericCategoryId]
+    );
+
+    if (!category) {
+      return res.status(404).json({
+        error: "Category not found",
+      });
+    }
+
+    const createdProduct = await db.one(
+      `
+        INSERT INTO products (
+          sku,
+          seller_id,
+          category_id,
+          product_name,
+          brand,
+          price,
+          sale_price,
+          is_on_sale,
+          is_featured,
+          quantity,
+          item_type,
+          product_condition,
+          availability_status,
+          product_description,
+          listing_date,
+          updated_at
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          COALESCE($8, false),
+          COALESCE($9, false),
+          $10,
+          $11,
+          $12,
+          $13,
+          $14,
+          CURRENT_TIMESTAMP,
+          CURRENT_TIMESTAMP
+        )
+        RETURNING *
+      `,
+      [
+        sku.trim().toUpperCase(),
+        req.user.userId,
+        numericCategoryId,
+        productName.trim(),
+        brand?.trim() || null,
+        numericPrice,
+        numericSalePrice,
+        typeof isOnSale === "boolean" ? isOnSale : false,
+        typeof isFeatured === "boolean" ? isFeatured : false,
+        numericQuantity,
+        itemType || "used",
+        productCondition || "good",
+        availabilityStatus || "available",
+        productDescription?.trim() || null,
+      ]
+    );
+
+    await logAdminAction({
+      adminUserId: req.user.userId,
+      action: "CREATE_PRODUCT",
+      targetTable: "products",
+      targetId: createdProduct.product_id,
+      details: req.body,
+    });
+
+    return res.status(201).json({
+      message: "Product created successfully",
+      product: createdProduct,
+    });
+  } catch (error) {
+    console.log("CREATE ADMIN PRODUCT ERROR:", error);
+
+    if (error.code === "23505") {
+      return res.status(409).json({
+        error: "A product with this SKU already exists",
+      });
+    }
+
+    return res.status(500).json({
+      error: "Failed to create product",
+    });
+  }
+};
+
+export const deleteAdminProduct = async (req, res) => {
+  try {
+    const productId = Number(req.params.productId);
+
+    if (!Number.isInteger(productId)) {
+      return res.status(400).json({
+        error: "Invalid product id",
+      });
+    }
+
+    const updatedProduct = await db.oneOrNone(
+      `
+        UPDATE products
+        SET availability_status = 'removed',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE product_id = $1
+        RETURNING product_id, product_name, availability_status
+      `,
+      [productId]
+    );
+
+    if (!updatedProduct) {
+      return res.status(404).json({
+        error: "Product not found",
+      });
+    }
+
+    await logAdminAction({
+      adminUserId: req.user.userId,
+      action: "REMOVE_PRODUCT",
+      targetTable: "products",
+      targetId: productId,
+      details: {
+        productId,
+        productName: updatedProduct.product_name,
+        availabilityStatus: updatedProduct.availability_status,
+      },
+    });
+
+    return res.status(200).json({
+      message: "Product removed successfully",
+      product: {
+        productId: updatedProduct.product_id,
+        name: updatedProduct.product_name,
+        availabilityStatus: updatedProduct.availability_status,
+      },
+    });
+  } catch (error) {
+    console.log("DELETE ADMIN PRODUCT ERROR:", error);
+    return res.status(500).json({
+      error: "Failed to remove product",
+    });
+  }
+};
+
 export const getAdminUsers = async (req, res) => {
   try {
     const users = await db.any(
