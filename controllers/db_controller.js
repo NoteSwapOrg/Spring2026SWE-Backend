@@ -6,7 +6,9 @@ import db from "../db.js";
 // Simple example query that fetches one user by user_id.
 export const user_info = async (user_id) => {
   try {
-    const user_info = await db.one("SELECT * FROM users WHERE user_id = $1", [user_id]);
+    const user_info = await db.one("SELECT * FROM users WHERE user_id = $1", [
+      user_id,
+    ]);
     return user_info;
   } catch (error) {
     console.log("ERROR:", error);
@@ -18,7 +20,9 @@ export const user_info = async (user_id) => {
 // Simple example query that fetches one order by order_id.
 export const order_info = async (order_id) => {
   try {
-    const order_info = await db.one("SELECT * FROM orders WHERE order_id = $1", [order_id]);
+    const order_info = await db.one("SELECT * FROM orders WHERE order_id = $1", [
+      order_id,
+    ]);
     return order_info;
   } catch (error) {
     console.log("ERROR:", error);
@@ -37,8 +41,12 @@ const productSelect = `
     c.category_name AS category,
     p.brand,
     p.price::float8 AS price,
+    p.sale_price::float8 AS "salePrice",
+    p.is_on_sale AS "isOnSale",
+    p.is_featured AS "isFeatured",
     p.quantity,
     p.item_type::text AS "itemType",
+    p.product_condition::text AS condition,
     p.product_description AS description,
     p.listing_date AS "listingDate",
     p.availability_status::text AS "availabilityStatus",
@@ -66,7 +74,7 @@ export const get_all_products = async () => {
     return await db.any(`
       ${productSelect}
       WHERE p.availability_status = 'available'
-      ORDER BY p.listing_date DESC, p.product_id DESC
+      ORDER BY p.is_featured DESC, p.listing_date DESC, p.product_id DESC
     `);
   } catch (error) {
     console.log("ERROR:", error);
