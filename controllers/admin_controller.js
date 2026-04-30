@@ -98,6 +98,7 @@ export const getAdminProducts = async (req, res) => {
           p.product_condition::text AS product_condition,
           p.availability_status::text AS availability_status,
           p.product_description,
+          p.image_url,
           p.listing_date,
           p.updated_at,
           c.category_id,
@@ -128,6 +129,7 @@ export const getAdminProducts = async (req, res) => {
         condition: product.product_condition,
         availabilityStatus: product.availability_status,
         description: product.product_description,
+        imageUrl: product.image_url,
         listingDate: product.listing_date,
         updatedAt: product.updated_at,
         category: {
@@ -170,6 +172,7 @@ export const updateAdminProduct = async (req, res) => {
       quantity,
       availabilityStatus,
       productDescription,
+      imageUrl,
     } = req.body;
 
     const updatedProduct = await db.oneOrNone(
@@ -185,8 +188,9 @@ export const updateAdminProduct = async (req, res) => {
           quantity = COALESCE($7, quantity),
           availability_status = COALESCE($8, availability_status),
           product_description = COALESCE($9, product_description),
+          image_url = COALESCE($10, image_url),
           updated_at = CURRENT_TIMESTAMP
-        WHERE product_id = $10
+        WHERE product_id = $11
         RETURNING *
       `,
       [
@@ -199,6 +203,7 @@ export const updateAdminProduct = async (req, res) => {
         quantity ?? null,
         availabilityStatus ?? null,
         productDescription ?? null,
+        imageUrl?.trim() || null,
         productId,
       ]
     );
@@ -245,6 +250,7 @@ export const createAdminProduct = async (req, res) => {
       productCondition,
       availabilityStatus,
       productDescription,
+      imageUrl,
     } = req.body;
 
     if (!sku || !productName || !categoryId || price === undefined || quantity === undefined) {
@@ -332,6 +338,7 @@ export const createAdminProduct = async (req, res) => {
           product_condition,
           availability_status,
           product_description,
+          image_url,
           listing_date,
           updated_at
         )
@@ -350,6 +357,7 @@ export const createAdminProduct = async (req, res) => {
           $12,
           $13,
           $14,
+          $15,
           CURRENT_TIMESTAMP,
           CURRENT_TIMESTAMP
         )
@@ -370,6 +378,7 @@ export const createAdminProduct = async (req, res) => {
         productCondition || "good",
         availabilityStatus || "available",
         productDescription?.trim() || null,
+        imageUrl?.trim() || null,
       ]
     );
 
@@ -818,6 +827,13 @@ export const createDiscountCode = async (req, res) => {
     });
   } catch (error) {
     console.log("CREATE DISCOUNT CODE ERROR:", error);
+
+    if (error.code === "23505") {
+      return res.status(409).json({
+        error: "A discount code with this code already exists",
+      });
+    }
+
     return res.status(500).json({
       error: "Failed to create discount code",
     });
@@ -841,6 +857,210 @@ export const getDiscountCodes = async (req, res) => {
     console.log("GET DISCOUNT CODES ERROR:", error);
     return res.status(500).json({
       error: "Failed to fetch discount codes",
+    });
+  }
+};
+
+export const updateDiscountCode = async (req, res) => {
+  try {
+    const discountCodeId = Number(req.params.discountCodeId);
+
+    if (!Number.isInteger(discountCodeId)) {
+      return res.status(400).json({
+        error: "Invalid discount code id",
+      });
+    }
+
+    const {
+      code,
+      description,
+      discountType,
+      discountValue,
+      minimumOrderAmount,
+      maxUses,
+      startsAt,
+      expiresAt,
+      isActive,
+    } = req.body;
+
+    const normalizedCode = code?.trim().toUpperCase() || null;
+    const numericDiscountValue =
+      discountValue === undefined || discountValue === null || discountValue === ""
+        ? null
+        : Number(discountValue);
+
+    const numericMinimumOrderAmount =
+      minimumOrderAmount === undefined ||
+      minimumOrderAmount === null ||
+      minimumOrderAmount === ""
+        ? null
+        : Number(minimumOrderAmount);
+
+    const numericMaxUses =
+      maxUses === undefined || maxUses === null || maxUses === ""
+        ? null
+        : Number(maxUses);
+
+    if (normalizedCode && !/^[A-Z0-9_-]+$/.test(normalizedCode)) {
+      return res.status(400).json({
+        error: "Code can only include letters, numbers, underscores, or dashes",
+      });
+    }
+
+    if (
+      numericDiscountValue !== null &&
+      (!Number.isFinite(numericDiscountValue) || numericDiscountValue <= 0)
+    ) {
+      return res.status(400).json({
+        error: "Discount value must be greater than 0",
+      });
+    }
+
+    if (
+      discountType === "percentage" &&
+      numericDiscountValue !== null &&
+      numericDiscountValue > 100
+    ) {
+      return res.status(400).json({
+        error: "Percentage discount cannot be greater than 100",
+      });
+    }
+
+    if (
+      numericMinimumOrderAmount !== null &&
+      (!Number.isFinite(numericMinimumOrderAmount) || numericMinimumOrderAmount < 0)
+    ) {
+      return res.status(400).json({
+        error: "Minimum order amount cannot be negative",
+      });
+    }
+
+    if (
+      numericMaxUses !== null &&
+      (!Number.isInteger(numericMaxUses) || numericMaxUses <= 0)
+    ) {
+      return res.status(400).json({
+        error: "Max uses must be a positive whole number",
+      });
+    }
+
+    if (startsAt && expiresAt && new Date(expiresAt) <= new Date(startsAt)) {
+      return res.status(400).json({
+        error: "Expiration date must be after the start date",
+      });
+    }
+
+    const updatedCode = await db.oneOrNone(
+      `
+        UPDATE discount_codes
+        SET
+          code = COALESCE($1, code),
+          description = $2,
+          discount_type = COALESCE($3, discount_type),
+          discount_value = COALESCE($4, discount_value),
+          minimum_order_amount = COALESCE($5, minimum_order_amount),
+          max_uses = $6,
+          starts_at = $7,
+          expires_at = $8,
+          is_active = COALESCE($9, is_active),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE discount_code_id = $10
+        RETURNING *
+      `,
+      [
+        normalizedCode,
+        description ?? null,
+        discountType ?? null,
+        numericDiscountValue,
+        numericMinimumOrderAmount,
+        numericMaxUses,
+        startsAt ?? null,
+        expiresAt ?? null,
+        typeof isActive === "boolean" ? isActive : null,
+        discountCodeId,
+      ]
+    );
+
+    if (!updatedCode) {
+      return res.status(404).json({
+        error: "Discount code not found",
+      });
+    }
+
+    await logAdminAction({
+      adminUserId: req.user.userId,
+      action: "UPDATE_DISCOUNT_CODE",
+      targetTable: "discount_codes",
+      targetId: discountCodeId,
+      details: req.body,
+    });
+
+    return res.status(200).json({
+      message: "Discount code updated successfully",
+      discountCode: updatedCode,
+    });
+  } catch (error) {
+    console.log("UPDATE DISCOUNT CODE ERROR:", error);
+
+    if (error.code === "23505") {
+      return res.status(409).json({
+        error: "A discount code with this code already exists",
+      });
+    }
+
+    return res.status(500).json({
+      error: "Failed to update discount code",
+    });
+  }
+};
+
+export const deleteDiscountCode = async (req, res) => {
+  try {
+    const discountCodeId = Number(req.params.discountCodeId);
+
+    if (!Number.isInteger(discountCodeId)) {
+      return res.status(400).json({
+        error: "Invalid discount code id",
+      });
+    }
+
+    const updatedCode = await db.oneOrNone(
+      `
+        UPDATE discount_codes
+        SET
+          is_active = false,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE discount_code_id = $1
+        RETURNING *
+      `,
+      [discountCodeId]
+    );
+
+    if (!updatedCode) {
+      return res.status(404).json({
+        error: "Discount code not found",
+      });
+    }
+
+    await logAdminAction({
+      adminUserId: req.user.userId,
+      action: "DEACTIVATE_DISCOUNT_CODE",
+      targetTable: "discount_codes",
+      targetId: discountCodeId,
+      details: {
+        discountCodeId,
+        code: updatedCode.code,
+      },
+    });
+
+    return res.status(200).json({
+      message: "Discount code deactivated successfully",
+      discountCode: updatedCode,
+    });
+  } catch (error) {
+    console.log("DELETE DISCOUNT CODE ERROR:", error);
+    return res.status(500).json({
+      error: "Failed to deactivate discount code",
     });
   }
 };
@@ -904,7 +1124,7 @@ export const createSale = async (req, res) => {
               VALUES ($1, $2)
               ON CONFLICT (sale_id, product_id) DO NOTHING
             `,
-            [createdSale.sale_id, productId]
+            [createdSale.sale_id, Number(productId)]
           );
         }
       }
@@ -917,7 +1137,7 @@ export const createSale = async (req, res) => {
               VALUES ($1, $2)
               ON CONFLICT (sale_id, category_id) DO NOTHING
             `,
-            [createdSale.sale_id, categoryId]
+            [createdSale.sale_id, Number(categoryId)]
           );
         }
       }
@@ -949,9 +1169,26 @@ export const getSales = async (req, res) => {
   try {
     const sales = await db.any(
       `
-        SELECT *
-        FROM sales
-        ORDER BY created_at DESC, sale_id DESC
+        SELECT
+          s.*,
+          COALESCE(
+            (
+              SELECT ARRAY_AGG(sp.product_id ORDER BY sp.product_id)
+              FROM sale_products sp
+              WHERE sp.sale_id = s.sale_id
+            ),
+            ARRAY[]::int[]
+          ) AS product_ids,
+          COALESCE(
+            (
+              SELECT ARRAY_AGG(sc.category_id ORDER BY sc.category_id)
+              FROM sale_categories sc
+              WHERE sc.sale_id = s.sale_id
+            ),
+            ARRAY[]::int[]
+          ) AS category_ids
+        FROM sales s
+        ORDER BY s.created_at DESC, s.sale_id DESC
       `
     );
 
@@ -962,6 +1199,234 @@ export const getSales = async (req, res) => {
     console.log("GET SALES ERROR:", error);
     return res.status(500).json({
       error: "Failed to fetch sales",
+    });
+  }
+};
+
+export const updateSale = async (req, res) => {
+  try {
+    const saleId = Number(req.params.saleId);
+
+    if (!Number.isInteger(saleId)) {
+      return res.status(400).json({
+        error: "Invalid sale id",
+      });
+    }
+
+    const {
+      saleName,
+      description,
+      saleScope,
+      discountType,
+      discountValue,
+      startsAt,
+      endsAt,
+      isActive,
+      productIds = [],
+      categoryIds = [],
+    } = req.body;
+
+    const numericDiscountValue =
+      discountValue === undefined || discountValue === null || discountValue === ""
+        ? null
+        : Number(discountValue);
+
+    if (saleName !== undefined && !String(saleName).trim()) {
+      return res.status(400).json({
+        error: "Sale name is required",
+      });
+    }
+
+    if (
+      numericDiscountValue !== null &&
+      (!Number.isFinite(numericDiscountValue) || numericDiscountValue <= 0)
+    ) {
+      return res.status(400).json({
+        error: "Discount value must be greater than 0",
+      });
+    }
+
+    if (
+      discountType === "percentage" &&
+      numericDiscountValue !== null &&
+      numericDiscountValue > 100
+    ) {
+      return res.status(400).json({
+        error: "Percentage discount cannot be greater than 100",
+      });
+    }
+
+    if (startsAt && endsAt && new Date(endsAt) <= new Date(startsAt)) {
+      return res.status(400).json({
+        error: "End date must be after the start date",
+      });
+    }
+
+    if (saleScope === "product" && (!Array.isArray(productIds) || productIds.length === 0)) {
+      return res.status(400).json({
+        error: "Select at least one product for a product-specific sale",
+      });
+    }
+
+    if (
+      saleScope === "category" &&
+      (!Array.isArray(categoryIds) || categoryIds.length === 0)
+    ) {
+      return res.status(400).json({
+        error: "Select at least one category for a category sale",
+      });
+    }
+
+    const sale = await db.tx(async (t) => {
+      const existingSale = await t.oneOrNone(
+        `
+          SELECT *
+          FROM sales
+          WHERE sale_id = $1
+        `,
+        [saleId]
+      );
+
+      if (!existingSale) {
+        return null;
+      }
+
+      const nextScope = saleScope || existingSale.sale_scope;
+
+      const updatedSale = await t.one(
+        `
+          UPDATE sales
+          SET
+            sale_name = COALESCE($1, sale_name),
+            description = $2,
+            sale_scope = COALESCE($3, sale_scope),
+            discount_type = COALESCE($4, discount_type),
+            discount_value = COALESCE($5, discount_value),
+            starts_at = $6,
+            ends_at = $7,
+            is_active = COALESCE($8, is_active),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE sale_id = $9
+          RETURNING *
+        `,
+        [
+          saleName?.trim() || null,
+          description ?? null,
+          saleScope ?? null,
+          discountType ?? null,
+          numericDiscountValue,
+          startsAt ?? null,
+          endsAt ?? null,
+          typeof isActive === "boolean" ? isActive : null,
+          saleId,
+        ]
+      );
+
+      await t.none(`DELETE FROM sale_products WHERE sale_id = $1`, [saleId]);
+      await t.none(`DELETE FROM sale_categories WHERE sale_id = $1`, [saleId]);
+
+      if (nextScope === "product" && Array.isArray(productIds)) {
+        for (const productId of productIds) {
+          await t.none(
+            `
+              INSERT INTO sale_products (sale_id, product_id)
+              VALUES ($1, $2)
+              ON CONFLICT (sale_id, product_id) DO NOTHING
+            `,
+            [saleId, Number(productId)]
+          );
+        }
+      }
+
+      if (nextScope === "category" && Array.isArray(categoryIds)) {
+        for (const categoryId of categoryIds) {
+          await t.none(
+            `
+              INSERT INTO sale_categories (sale_id, category_id)
+              VALUES ($1, $2)
+              ON CONFLICT (sale_id, category_id) DO NOTHING
+            `,
+            [saleId, Number(categoryId)]
+          );
+        }
+      }
+
+      return updatedSale;
+    });
+
+    if (!sale) {
+      return res.status(404).json({
+        error: "Sale not found",
+      });
+    }
+
+    await logAdminAction({
+      adminUserId: req.user.userId,
+      action: "UPDATE_SALE",
+      targetTable: "sales",
+      targetId: saleId,
+      details: req.body,
+    });
+
+    return res.status(200).json({
+      message: "Sale updated successfully",
+      sale,
+    });
+  } catch (error) {
+    console.log("UPDATE SALE ERROR:", error);
+    return res.status(500).json({
+      error: "Failed to update sale",
+    });
+  }
+};
+
+export const deleteSale = async (req, res) => {
+  try {
+    const saleId = Number(req.params.saleId);
+
+    if (!Number.isInteger(saleId)) {
+      return res.status(400).json({
+        error: "Invalid sale id",
+      });
+    }
+
+    const updatedSale = await db.oneOrNone(
+      `
+        UPDATE sales
+        SET
+          is_active = false,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE sale_id = $1
+        RETURNING *
+      `,
+      [saleId]
+    );
+
+    if (!updatedSale) {
+      return res.status(404).json({
+        error: "Sale not found",
+      });
+    }
+
+    await logAdminAction({
+      adminUserId: req.user.userId,
+      action: "DEACTIVATE_SALE",
+      targetTable: "sales",
+      targetId: saleId,
+      details: {
+        saleId,
+        saleName: updatedSale.sale_name,
+      },
+    });
+
+    return res.status(200).json({
+      message: "Sale deactivated successfully",
+      sale: updatedSale,
+    });
+  } catch (error) {
+    console.log("DELETE SALE ERROR:", error);
+    return res.status(500).json({
+      error: "Failed to deactivate sale",
     });
   }
 };
