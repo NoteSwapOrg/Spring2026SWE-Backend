@@ -98,6 +98,7 @@ export const getAdminProducts = async (req, res) => {
           p.product_condition::text AS product_condition,
           p.availability_status::text AS availability_status,
           p.product_description,
+          p.image_url,
           p.listing_date,
           p.updated_at,
           c.category_id,
@@ -128,6 +129,7 @@ export const getAdminProducts = async (req, res) => {
         condition: product.product_condition,
         availabilityStatus: product.availability_status,
         description: product.product_description,
+        imageUrl: product.image_url,
         listingDate: product.listing_date,
         updatedAt: product.updated_at,
         category: {
@@ -170,6 +172,7 @@ export const updateAdminProduct = async (req, res) => {
       quantity,
       availabilityStatus,
       productDescription,
+      imageUrl,
     } = req.body;
 
     const updatedProduct = await db.oneOrNone(
@@ -185,8 +188,9 @@ export const updateAdminProduct = async (req, res) => {
           quantity = COALESCE($7, quantity),
           availability_status = COALESCE($8, availability_status),
           product_description = COALESCE($9, product_description),
+          image_url = COALESCE($10, image_url),
           updated_at = CURRENT_TIMESTAMP
-        WHERE product_id = $10
+        WHERE product_id = $11
         RETURNING *
       `,
       [
@@ -199,6 +203,7 @@ export const updateAdminProduct = async (req, res) => {
         quantity ?? null,
         availabilityStatus ?? null,
         productDescription ?? null,
+        imageUrl?.trim() || null,
         productId,
       ]
     );
@@ -245,6 +250,7 @@ export const createAdminProduct = async (req, res) => {
       productCondition,
       availabilityStatus,
       productDescription,
+      imageUrl,
     } = req.body;
 
     if (!sku || !productName || !categoryId || price === undefined || quantity === undefined) {
@@ -332,6 +338,7 @@ export const createAdminProduct = async (req, res) => {
           product_condition,
           availability_status,
           product_description,
+          image_url,
           listing_date,
           updated_at
         )
@@ -350,6 +357,7 @@ export const createAdminProduct = async (req, res) => {
           $12,
           $13,
           $14,
+          $15,
           CURRENT_TIMESTAMP,
           CURRENT_TIMESTAMP
         )
@@ -370,6 +378,7 @@ export const createAdminProduct = async (req, res) => {
         productCondition || "good",
         availabilityStatus || "available",
         productDescription?.trim() || null,
+        imageUrl?.trim() || null,
       ]
     );
 

@@ -30,6 +30,22 @@ export const order_info = async (order_id) => {
   }
 };
 
+// Shared fallback image logic.
+// Product-specific p.image_url is used first.
+// Category image is only used if image_url is missing.
+const categoryImageFallback = `
+  CASE c.category_name
+    WHEN 'Guitar' THEN 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?auto=format&fit=crop&w=900&q=80'
+    WHEN 'Piano' THEN 'https://images.unsplash.com/photo-1514119412350-e174d90d280e?auto=format&fit=crop&w=900&q=80'
+    WHEN 'Drums' THEN 'https://images.unsplash.com/photo-1519892300165-cb5542fb47c7?auto=format&fit=crop&w=900&q=80'
+    WHEN 'Violin' THEN 'https://images.unsplash.com/photo-1465821185615-20b3c2fbf41b?auto=format&fit=crop&w=900&q=80'
+    WHEN 'Brass' THEN 'https://images.unsplash.com/photo-1511192336575-5a79af67a629?auto=format&fit=crop&w=900&q=80'
+    WHEN 'Woodwind' THEN 'https://images.unsplash.com/photo-1507838153414-b4b713384a76?auto=format&fit=crop&w=900&q=80'
+    WHEN 'Accessories' THEN 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=900&q=80'
+    ELSE 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=900&q=80'
+  END
+`;
+
 // Shared SQL fragment for product lookups.
 // This joins products with categories and users so the frontend gets
 // one clean object with everything it needs for display.
@@ -52,16 +68,14 @@ const productSelect = `
     p.availability_status::text AS "availabilityStatus",
     CONCAT(u.first_name, ' ', u.last_name) AS seller,
     COALESCE(u.address, 'San Antonio, TX') AS location,
-    CASE c.category_name
-      WHEN 'Guitar' THEN 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?auto=format&fit=crop&w=900&q=80'
-      WHEN 'Piano' THEN 'https://images.unsplash.com/photo-1514119412350-e174d90d280e?auto=format&fit=crop&w=900&q=80'
-      WHEN 'Drums' THEN 'https://images.unsplash.com/photo-1519892300165-cb5542fb47c7?auto=format&fit=crop&w=900&q=80'
-      WHEN 'Violin' THEN 'https://images.unsplash.com/photo-1465821185615-20b3c2fbf41b?auto=format&fit=crop&w=900&q=80'
-      WHEN 'Brass' THEN 'https://images.unsplash.com/photo-1511192336575-5a79af67a629?auto=format&fit=crop&w=900&q=80'
-      WHEN 'Woodwind' THEN 'https://images.unsplash.com/photo-1507838153414-b4b713384a76?auto=format&fit=crop&w=900&q=80'
-      WHEN 'Accessories' THEN 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=900&q=80'
-      ELSE 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=900&q=80'
-    END AS image
+
+    -- Keep frontend field name as "image"
+    -- but now it uses the product-specific image_url first.
+    COALESCE(NULLIF(TRIM(p.image_url), ''), ${categoryImageFallback}) AS image,
+
+    -- Also expose the raw DB column in case the frontend/admin wants it.
+    p.image_url AS "imageUrl"
+
   FROM products p
   JOIN categories c ON p.category_id = c.category_id
   JOIN users u ON p.seller_id = u.user_id
