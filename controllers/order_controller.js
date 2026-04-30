@@ -106,16 +106,20 @@ export const getOrderById = async (req, res) => {
           p.brand,
           p.sku,
           c.category_name AS category,
-          CASE c.category_name
-            WHEN 'Guitar' THEN 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?auto=format&fit=crop&w=900&q=80'
-            WHEN 'Piano' THEN 'https://images.unsplash.com/photo-1514119412350-e174d90d280e?auto=format&fit=crop&w=900&q=80'
-            WHEN 'Drums' THEN 'https://images.unsplash.com/photo-1519892300165-cb5542fb47c7?auto=format&fit=crop&w=900&q=80'
-            WHEN 'Violin' THEN 'https://images.unsplash.com/photo-1465821185615-20b3c2fbf41b?auto=format&fit=crop&w=900&q=80'
-            WHEN 'Brass' THEN 'https://images.unsplash.com/photo-1511192336575-5a79af67a629?auto=format&fit=crop&w=900&q=80'
-            WHEN 'Woodwind' THEN 'https://images.unsplash.com/photo-1507838153414-b4b713384a76?auto=format&fit=crop&w=900&q=80'
-            WHEN 'Accessories' THEN 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=900&q=80'
-            ELSE 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=900&q=80'
-          END AS image
+          COALESCE(
+            NULLIF(TRIM(p.image_url), ''),
+            CASE c.category_name
+              WHEN 'Guitar' THEN 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?auto=format&fit=crop&w=900&q=80'
+              WHEN 'Piano' THEN 'https://images.unsplash.com/photo-1514119412350-e174d90d280e?auto=format&fit=crop&w=900&q=80'
+              WHEN 'Drums' THEN 'https://images.unsplash.com/photo-1519892300165-cb5542fb47c7?auto=format&fit=crop&w=900&q=80'
+              WHEN 'Violin' THEN 'https://images.unsplash.com/photo-1465821185615-20b3c2fbf41b?auto=format&fit=crop&w=900&q=80'
+              WHEN 'Brass' THEN 'https://images.unsplash.com/photo-1511192336575-5a79af67a629?auto=format&fit=crop&w=900&q=80'
+              WHEN 'Woodwind' THEN 'https://images.unsplash.com/photo-1507838153414-b4b713384a76?auto=format&fit=crop&w=900&q=80'
+              WHEN 'Accessories' THEN 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=900&q=80'
+              ELSE 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=900&q=80'
+            END
+          ) AS image,
+          p.image_url AS image_url
         FROM order_items oi
         JOIN products p ON oi.product_id = p.product_id
         JOIN categories c ON p.category_id = c.category_id
@@ -146,6 +150,7 @@ export const getOrderById = async (req, res) => {
           sku: item.sku,
           category: item.category,
           image: item.image,
+          imageUrl: item.image_url,
           quantity: Number(item.quantity) || 0,
           unitPrice: Number(item.unit_price) || 0,
           lineTotal: Number(item.line_total) || 0,
