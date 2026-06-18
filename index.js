@@ -6,7 +6,10 @@ import router from "./routes/router.js";
 const app = express();
 const PORT = 5001;
 
-app.use(cors());
+app.use(cors({
+  origin: process.env.FRONTEND_URL,
+  credentials: true
+}));
 app.use(express.json());
 
 app.get("/api/health", (req, res) => {
